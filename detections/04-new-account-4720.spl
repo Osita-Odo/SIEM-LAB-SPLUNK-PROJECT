@@ -1,0 +1,5 @@
+# T1136 - Create Account
+# Detects newly created Windows/AD user accounts (Event ID 4720), a common
+# persistence step after initial access.
+index=wineventlog source="WinEventLog:Security" EventCode=4720
+| table _time, host, Account_Name, Subject_Account_Name

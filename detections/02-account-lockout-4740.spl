@@ -1,0 +1,5 @@
+# T1110 - Brute Force (resulting account lockout)
+# Surfaces account lockout events (Event ID 4740), the downstream effect of a
+# successful brute-force or password-spray against a locked-threshold policy.
+index=wineventlog source="WinEventLog:Security" EventCode=4740
+| table _time, host, Account_Name, Caller_Computer_Name

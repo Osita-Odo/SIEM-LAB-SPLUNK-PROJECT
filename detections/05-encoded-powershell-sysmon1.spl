@@ -1,0 +1,5 @@
+# T1059.001 - Command and Scripting Interpreter: PowerShell
+# Detects PowerShell launched with an encoded command line (Sysmon Event ID 1),
+# a frequent obfuscation technique for downloaders and in-memory payloads.
+index=wineventlog source="WinEventLog:Microsoft-Windows-Sysmon/Operational" EventCode=1 CommandLine="*EncodedCommand*"
+| table _time, host, User, Image, ParentImage, CommandLine

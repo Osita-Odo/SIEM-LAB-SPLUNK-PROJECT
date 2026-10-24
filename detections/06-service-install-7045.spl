@@ -1,0 +1,5 @@
+# T1543.003 - Create or Modify System Process: Windows Service
+# Detects new service installations (Event ID 7045). Attackers install services
+# for persistence or to run code as SYSTEM; watch for odd service paths/binaries.
+index=wineventlog source="WinEventLog:System" EventCode=7045
+| table _time, host, Service_Name, Service_File_Name

@@ -1,0 +1,6 @@
+# T1110 - Brute Force (failed sign-ins)
+# Flags any account/source with more than 5 failed Windows sign-ins (Event ID 4625)
+# in the search window. Base of the scheduled alert "Brute-force sign-ins (5+ failures)".
+index=wineventlog source="WinEventLog:Security" EventCode=4625
+| stats count by Account_Name, Source_Network_Address, host
+| where count > 5

@@ -1,0 +1,6 @@
+# T1098 - Account Manipulation (privileged group changes)
+# Detects a member being added to a security-enabled group: global (4728),
+# local (4732) or universal (4756). Catches an attacker adding an account to
+# Domain Admins or similar.
+index=wineventlog source="WinEventLog:Security" (EventCode=4728 OR EventCode=4732 OR EventCode=4756)
+| table _time, host, Group_Name, Member_Name, Subject_Account_Name
