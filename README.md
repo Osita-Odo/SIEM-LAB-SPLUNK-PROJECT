@@ -5,7 +5,7 @@ Two hands-on SIEM labs built on Microsoft Azure that detect the same attacks aga
 | Project | What it covers | Status |
 |---|---|---|
 | **[Splunk SIEM Lab](splunk/README.md)** | Splunk Enterprise on an Ubuntu VM, Universal Forwarder and Sysmon on the endpoints, six SPL detections, a scheduled alert and a monitoring dashboard | Complete |
-| **[Microsoft Sentinel SOC Lab](sentinel/README.md)** | Sentinel on a Log Analytics workspace, Azure Monitor Agent with data collection rules, six KQL analytics rules and incidents in the Microsoft Defender portal | In progress (Phases 1 to 4 built) |
+| **[Microsoft Sentinel SOC Lab](sentinel/README.md)** | Sentinel on a Log Analytics workspace, Azure Monitor Agent with data collection rules, six KQL analytics rules and incidents in the Microsoft Defender portal | In progress (all six detections proven; investigation done, workbook and playbook next) |
 
 Both labs use the Windows domain built in the [Azure Active Directory Lab](https://github.com/Osita-Odo/azure-active-directory-lab) as their log source: a domain controller (VM-AD) and a domain-joined client (CLIENT01), both running Sysmon.
 

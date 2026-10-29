@@ -4,7 +4,7 @@ A cloud-native SIEM lab built on Microsoft Sentinel. Windows logs from an Active
 
 This is the Sentinel half of the [SIEM labs](../README.md). It detects the same attacks as the [Splunk SIEM lab](../splunk/README.md), so the two can be compared side by side, and it uses the domain from the [Azure Active Directory Lab](https://github.com/Osita-Odo/azure-active-directory-lab) as its log source.
 
-> **Status: in progress.** Phases 1 to 4 are built. Four of the six detections are proven by real incidents. All data sources are now flowing, including Sysmon after the fix in Challenge 4. The encoded PowerShell and service installation attacks are the next step, followed by investigation, a workbook and an automated response playbook.
+> **Status: in progress.** Phases 1 to 4 are complete: all six detections are proven by real incidents. In Phase 5, a High incident has been investigated, decoded from the evidence and closed. A workbook and an automated response playbook come next.
 
 ## Objective
 
@@ -60,8 +60,8 @@ The Azure Monitor Agent on each endpoint follows two data collection rules. One 
 | Account lockout | 4740 | T1110 Brute Force | Medium | Incident raised | [02](detections/02-account-lockout-4740.kql) |
 | Privileged group change | 4728 / 4732 / 4756 | T1098 Account Manipulation | High | Incident raised | [03](detections/03-privileged-group-change-4728-4732-4756.kql) |
 | New account created | 4720 | T1136 Create Account | Medium | Incident raised | [04](detections/04-new-account-4720.kql) |
-| Encoded PowerShell | Sysmon 1 | T1059.001 PowerShell | High | Rule live, attack pending | [05](detections/05-encoded-powershell-sysmon1.kql) |
-| Service installation | 7045 | T1543.003 Windows Service | Medium | Rule live, attack pending | [06](detections/06-service-install-7045.kql) |
+| Encoded PowerShell | Sysmon 1 | T1059.001 PowerShell | High | Incident raised | [05](detections/05-encoded-powershell-sysmon1.kql) |
+| Service installation | 7045 | T1543.003 Windows Service | Medium | Incident raised | [06](detections/06-service-install-7045.kql) |
 
 ## How it was built
 
@@ -141,14 +141,77 @@ All four Security-event rules raised incidents, with the host and account entiti
 | Account lockout (4740) | Incident | VM-AD and CLIENT01, svc_sentinel |
 | Brute-force sign-ins (4625) | Incident, after tuning (Challenge 5) | CLIENT01, svc_sentinel |
 
-Four attacks produced nine incidents. The duplicates and their fix are covered in Challenge 6.
+Once Sysmon collection was fixed (Challenge 4), the last two attacks were run on VM-AD. Both are harmless: the first only prints text, and the service is created but never started.
+
+```powershell
+$c = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output "sentinel test"'))
+powershell -NoProfile -EncodedCommand $c
+sc.exe create TestSvc binPath= "cmd.exe /c echo test"
+```
+
+![Service installation and encoded PowerShell events](images/17-final-attack-events.png)
+
+All six rules raised incidents:
+
+![All six detections raised incidents](images/18-all-six-incidents.png)
+
+| Rule | Result | Entities captured |
+|---|---|---|
+| New account created (4720) | Incident | VM-AD, AD\svc_sentinel |
+| Privileged group change | Incident (High) | VM-AD, AD\osita as the actor |
+| Account lockout (4740) | Incident | VM-AD and CLIENT01, svc_sentinel |
+| Brute-force sign-ins (4625) | Incident, after tuning (Challenge 5) | CLIENT01, svc_sentinel |
+| Encoded PowerShell (Sysmon 1) | Incident (High) | VM-AD only, no user (Challenge 9) |
+| Service installation (7045) | Incident | None mapped (Challenge 9) |
+
+The first four attacks produced nine incidents; the duplicates and their fix are covered in Challenge 6.
+
+**Clean-up.** The live test changes were then reversed. The incidents and logs remain as evidence.
+
+```powershell
+sc.exe delete TestSvc
+Remove-ADGroupMember -Identity "Domain Admins" -Members "svc_sentinel" -Confirm:$false
+Disable-ADAccount -Identity "svc_sentinel"
+```
+
+### Phase 5: Investigate and respond (in progress)
+
+Raising an incident is only half of the SOC job. The Encoded PowerShell incident was worked the way an analyst would: scope it, establish what ran from the evidence, judge it, document the reasoning, close it.
+
+1. **Scope.** One alert, one device (VM-AD), first and last activity at the same second: a single, isolated execution with no related alerts.
+2. **Gap noted.** No user entity, because the rule maps only the host (Challenge 9).
+3. **Evidence.** The alert does not show the command line, so it was taken from the Sysmon event, with KQL extracting the encoded payload into its own column:
+
+```kql
+Event
+| where EventLog == "Microsoft-Windows-Sysmon/Operational" and EventID == 1
+| where RenderedDescription has "EncodedCommand"
+| extend Encoded = extract(@"-EncodedCommand\s+(\S+)", 1, RenderedDescription)
+| project TimeGenerated, Computer, Encoded, RenderedDescription
+```
+
+4. **Decode.** PowerShell encodes commands as UTF-16, so the payload was decoded as Unicode:
+
+```powershell
+[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAiAHMAZQBuAHQAaQBuAGUAbAAgAHQAZQBzAHQAIgA="))
+# Output: Write-Output "sentinel test"
+```
+
+5. **Judge and close.** Benign, authorised testing. Assigned, resolved and classified as *Informational, expected activity - Security testing*, with the reasoning recorded on the incident.
+
+![Incident 11 scoped to a single execution on one device](images/19-incident-overview.png)
+
+![Payload extracted from the Sysmon event](images/20-payload-extracted.png)
+
+![Payload decoded](images/21-payload-decoded.png)
+
+![Incident resolved with classification and analyst note](images/22-incident-resolved.png)
 
 ## Next steps
 
-1. Run the encoded PowerShell and service installation attacks and confirm both incidents.
-2. Turn on alert grouping on every rule (Challenge 6).
-3. Investigate a High incident, build a workbook, and create a SOAR playbook (Logic App).
-4. Clean up the test account and service.
+1. Fix the entity mapping gaps (Challenge 9) and turn on alert grouping on every rule (Challenge 6).
+2. Build a workbook as the at-a-glance analyst view.
+3. Create a SOAR playbook (Logic App) that notifies the analyst when an incident is created.
 
 ## Repository contents
 
@@ -272,7 +335,33 @@ sentinel/
 
 **Steps to resolve.** Analytics, the rule, Edit, General, corrected the name, Save.
 
-**Outcome.** Resolved.
+**Outcome.** Resolved; the name was later capitalised to "Privileged group change". Incidents raised before the fix keep the old name, because an incident keeps the name it was created with.
+
+### Challenge 9: Incomplete entity mapping on two rules
+
+**What happened.** The Service installation incident showed no impacted assets at all, and the Encoded PowerShell incident showed a device but no user, so neither said who was involved.
+
+**Cause.** Entities only appear on an incident if the rule maps them. The service installation rule had no mapping, and the encoded PowerShell rule mapped only the host, because its query does not extract the user from the Sysmon event text.
+
+**Steps to resolve.**
+1. Compared impacted assets across incidents: every other rule shows a host and an account.
+2. Service installation: Edit, Set rule logic, Entity mapping, Host, HostName mapped to `Computer`.
+3. Encoded PowerShell: extract the user in the query (for example `extract(@"User: (\S+)", 1, RenderedDescription)`) and map it to an Account entity.
+
+**Outcome.** Cause identified and fixes defined; to be applied next. Lesson: test that every rule returns the entities an analyst needs, not just that it fires.
+
+### Challenge 10: Decoding the payload failed twice
+
+**What happened.** The first decode returned "The input is not a valid Base-64 string", and the next attempt nearly failed the same way.
+
+**Cause.** The first attempt still contained the placeholder text instead of the payload. The second copied value had lost its final `=`. Base64 is written in blocks of four characters with `=` as padding; the copied string was 75 characters long, so it was invalid without it.
+
+**Steps to resolve.**
+1. Took the value from the log rather than retyping it.
+2. Added a KQL `extract()` so the payload sits in its own column, which is easier to copy accurately than a long event description.
+3. Checked the length (75 is not a multiple of four), recopied the full value including the `=`, and decoded it.
+
+**Outcome.** Resolved. Lesson: take evidence directly from the source, and know enough about the encoding to spot a truncated value.
 
 ## Skills demonstrated
 
@@ -282,3 +371,4 @@ sentinel/
 - Simulating attacks against an Active Directory domain and verifying incidents in the Defender portal
 - Systematic troubleshooting of an ingestion pipeline from the portal down to the agent's local configuration
 - Detection tuning: aligning thresholds with lockout policy and diagnosing duplicate incidents
+- Incident triage: scoping an incident, extracting and decoding an obfuscated PowerShell payload from the evidence, and closing it with a documented classification
