@@ -1,0 +1,4 @@
+// T1098 Account Manipulation (Persistence, Privilege Escalation) | Severity: High | Run every 5 min, look back 15 min
+SecurityEvent
+| where EventID in (4728, 4732, 4756)
+| project TimeGenerated, Computer, Group = TargetAccount, MemberAdded = MemberName, Actor = SubjectAccount, Activity

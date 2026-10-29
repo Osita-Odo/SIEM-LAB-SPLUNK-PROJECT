@@ -1,0 +1,4 @@
+// T1136 Create Account (Persistence) | Severity: Medium | Run every 10 min, look back 30 min
+SecurityEvent
+| where EventID == 4720
+| project TimeGenerated, Computer, NewAccount = TargetAccount, CreatedBy = SubjectAccount

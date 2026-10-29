@@ -1,0 +1,8 @@
+// T1110 Brute Force (Credential Access) | Severity: Medium | Run every 5 min, look back 15 min
+// Counts failed sign-ins per account across all machines. Threshold set to 3 to match the
+// domain account lockout policy, which locks the account before a higher threshold is reached.
+SecurityEvent
+| where EventID == 4625
+| summarize FailedCount = count(), TimeGenerated = max(TimeGenerated),
+    Computer = any(Computer), IpAddress = any(IpAddress) by TargetAccount
+| where FailedCount >= 3

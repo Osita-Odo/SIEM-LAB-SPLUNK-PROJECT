@@ -1,0 +1,6 @@
+# Data collection rule: dcr-system-sysmon
+# Data source: Windows Event Logs, Custom mode. Destination: Log Analytics workspace (Event table).
+# Type these by hand. A pasted line with leading spaces is accepted by the portal but breaks
+# collection silently (see Challenge 4 in the README).
+System!*[System[(EventID=7045)]]
+Microsoft-Windows-Sysmon/Operational!*[System[(EventID=1)]]

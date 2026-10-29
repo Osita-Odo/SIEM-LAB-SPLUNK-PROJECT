@@ -1,0 +1,6 @@
+// T1059.001 PowerShell (Execution) | Severity: High | Run every 10 min, look back 30 min
+// Requires the dcr-system-sysmon data collection rule (Sysmon event 1 into the Event table).
+Event
+| where EventLog == "Microsoft-Windows-Sysmon/Operational" and EventID == 1
+| where RenderedDescription has "EncodedCommand"
+| project TimeGenerated, Computer, RenderedDescription

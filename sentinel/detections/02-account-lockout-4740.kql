@@ -1,0 +1,4 @@
+// T1110 Brute Force (Credential Access) | Severity: Medium | Run every 5 min, look back 15 min
+SecurityEvent
+| where EventID == 4740
+| project TimeGenerated, Computer, LockedAccount = TargetAccount, CallerComputer = TargetDomainName, Activity

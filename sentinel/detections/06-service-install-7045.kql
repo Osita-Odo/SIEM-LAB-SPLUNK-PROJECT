@@ -1,0 +1,4 @@
+// T1543.003 Windows Service (Persistence) | Severity: Medium | Run every 10 min, look back 30 min
+Event
+| where EventLog == "System" and EventID == 7045
+| project TimeGenerated, Computer, RenderedDescription

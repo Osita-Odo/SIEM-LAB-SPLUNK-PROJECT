@@ -1,0 +1,5 @@
+# Data collection rule: dcr-security-events
+# Created from the Sentinel connector "Windows Security Events via AMA".
+# Resources: VM-AD, CLIENT01-VMachine. Event set: Common.
+# "Common" includes 4625, 4740, 4720, 4728, 4732 and 4756, which are all this lab detects,
+# at a fraction of the volume of "All Security Events".
