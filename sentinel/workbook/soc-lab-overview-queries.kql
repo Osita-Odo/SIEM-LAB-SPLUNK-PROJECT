@@ -1,0 +1,26 @@
+// SOC Lab Overview workbook (Microsoft Sentinel, Threat management, Workbooks)
+// Each panel: Add data source + visualization, Logs (Analytics), workspace law-soc-lab-de, Last 7 days.
+
+// Panel 1: Incidents by Severity (Pie chart)
+// arg_max keeps only the latest row per incident, because Sentinel writes a new row on every change.
+SecurityIncident
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
+| summarize Incidents = count() by Severity
+
+// Panel 2: Alerts by Detection Rule (Bar chart)
+SecurityAlert
+| summarize Alerts = count() by AlertName
+| order by Alerts desc
+
+// Panel 3: Top 10 Accounts with Failed Sign-ins (Bar chart)
+SecurityEvent
+| where EventID == 4625
+| summarize FailedSignIns = count() by TargetAccount
+| top 10 by FailedSignIns
+
+// Panel 4: Open Incidents (Grid)
+SecurityIncident
+| summarize arg_max(TimeGenerated, *) by IncidentNumber
+| where Status != "Closed"
+| project IncidentNumber, Title, Severity, Status, CreatedTime
+| order by CreatedTime desc

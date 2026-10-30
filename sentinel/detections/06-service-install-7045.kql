@@ -1,4 +1,9 @@
 // T1543.003 Windows Service (Persistence) | Severity: Medium | Run every 10 min, look back 30 min
+// Entity mapping: Host (FullName = Computer).
+// Alert grouping: enabled, 5 hours, group when all entities match.
 Event
 | where EventLog == "System" and EventID == 7045
-| project TimeGenerated, Computer, RenderedDescription
+| extend ServiceName = extract(@"Service Name:\s+(.+?)\s+Service File Name", 1, RenderedDescription),
+         ServiceFile = extract(@"Service File Name:\s+(.+?)\s+Service Type", 1, RenderedDescription),
+         ServiceAccount = extract(@"Service Account:\s+(\S+)", 1, RenderedDescription)
+| project TimeGenerated, Computer, ServiceName, ServiceFile, ServiceAccount

@@ -4,7 +4,7 @@ A cloud-native SIEM lab built on Microsoft Sentinel. Windows logs from an Active
 
 This is the Sentinel half of the [SIEM labs](../README.md). It detects the same attacks as the [Splunk SIEM lab](../splunk/README.md), so the two can be compared side by side, and it uses the domain from the [Azure Active Directory Lab](https://github.com/Osita-Odo/azure-active-directory-lab) as its log source.
 
-> **Status: in progress.** Phases 1 to 4 are complete: all six detections are proven by real incidents. In Phase 5, a High incident has been investigated, decoded from the evidence and closed. A workbook and an automated response playbook come next.
+> **Status: in progress.** Phases 1 to 4 are complete: all six detections are proven by real incidents. In Phase 5, a High incident has been investigated, decoded from the evidence and closed; the rules were then tuned from what the investigation showed (user, payload and service details extracted, entities mapped, alert grouping on), re-tested, and a SOC overview workbook was built. An automated response playbook comes next.
 
 ## Objective
 
@@ -161,8 +161,8 @@ All six rules raised incidents:
 | Privileged group change | Incident (High) | VM-AD, AD\osita as the actor |
 | Account lockout (4740) | Incident | VM-AD and CLIENT01, svc_sentinel |
 | Brute-force sign-ins (4625) | Incident, after tuning (Challenge 5) | CLIENT01, svc_sentinel |
-| Encoded PowerShell (Sysmon 1) | Incident (High) | VM-AD only, no user (Challenge 9) |
-| Service installation (7045) | Incident | None mapped (Challenge 9) |
+| Encoded PowerShell (Sysmon 1) | Incident (High) | VM-AD only at first; host and user mapped after tuning (Challenge 9) |
+| Service installation (7045) | Incident | None at first; host mapped after tuning (Challenge 9) |
 
 The first four attacks produced nine incidents; the duplicates and their fix are covered in Challenge 6.
 
@@ -174,7 +174,9 @@ Remove-ADGroupMember -Identity "Domain Admins" -Members "svc_sentinel" -Confirm:
 Disable-ADAccount -Identity "svc_sentinel"
 ```
 
-### Phase 5: Investigate and respond (in progress)
+### Phase 5: Investigate, tune and monitor (in progress)
+
+#### 5.1 Investigate and close an incident
 
 Raising an incident is only half of the SOC job. The Encoded PowerShell incident was worked the way an analyst would: scope it, establish what ran from the evidence, judge it, document the reasoning, close it.
 
@@ -207,11 +209,85 @@ Event
 
 ![Incident resolved with classification and analyst note](images/22-incident-resolved.png)
 
+![Incident 11 closed as Benign Positive; the graph shows only the device](images/23-incident-11-closed.png)
+
+#### 5.2 Tune the rules from what the investigation showed
+
+The investigation exposed two weaknesses an analyst would raise with the detection team: incident 11 named the device but not the user, and the Service installation incidents named nothing (Challenge 9). Earlier attacks had also opened several incidents for the same activity (Challenge 6). Both were fixed in the rules:
+
+- **Encoded PowerShell:** the query now extracts the user and the encoded payload from the Sysmon event, so the payload is on the alert without a separate search. Host is mapped by `FullName` (the `Computer` column holds the fully qualified name) and a new Account entity uses `AccountName` and `AccountDomain` ([query](detections/05-encoded-powershell-sysmon1.kql)).
+- **Service installation:** the query now extracts the service name, file and account, and the host is mapped ([query](detections/06-service-install-7045.kql)).
+- **All six rules:** alert grouping enabled, alerts within 5 hours grouped into one incident when all entities match.
+
+The `where` lines are unchanged, so both rules fire on exactly the same events as before.
+
+```kql
+Event
+| where EventLog == "Microsoft-Windows-Sysmon/Operational" and EventID == 1
+| where RenderedDescription has "EncodedCommand"
+| extend User = extract(@"User: (\S+)", 1, RenderedDescription)
+| extend AccountDomain = tostring(split(User, "\\")[0]),
+         AccountName   = tostring(split(User, "\\")[1])
+| extend EncodedPayload = extract(@"-EncodedCommand\s+(\S+)", 1, RenderedDescription)
+| project TimeGenerated, Computer, User, AccountName, AccountDomain, EncodedPayload
+```
+
+![Service installation rule with the new query and Host mapping](images/24-service-rule-tuned.png)
+
+![Encoded PowerShell rule with Host and Account entities](images/25-powershell-rule-entities.png)
+
+#### 5.3 Re-test
+
+The encoded command was run twice on VM-AD to test the new entities and alert grouping together, and a second test service was created:
+
+```powershell
+$cmd = 'Write-Output "sentinel entity test"'
+$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+powershell.exe -EncodedCommand $enc
+powershell.exe -EncodedCommand $enc    # about a minute later
+sc.exe create TestSvc2 binPath= "C:\Windows\System32\cmd.exe /c echo test" start= demand
+```
+
+The updated rules raised **incident 14** (Encoded PowerShell, High) and **incident 15** (Service installation, Medium). Two runs produced one new incident instead of two, which shows alert grouping working. `TestSvc2` was then deleted; the incidents and logs remain as evidence.
+
+![The encoded command run twice on VM-AD](images/26-retest-encoded-powershell.png)
+
+![Cases after the re-test: one new incident for two runs](images/27-cases-after-retest.png)
+
+#### 5.4 SOC Lab Overview workbook
+
+A workbook gives the analyst the state of the environment at a glance, as the Splunk dashboard did in the other lab. It has four panels, all on the last seven days ([queries](workbook/soc-lab-overview-queries.kql)):
+
+| Panel | Visualisation | Shows |
+|---|---|---|
+| Incidents by Severity | Pie chart | 15 incidents: 9 Medium, 6 High |
+| Alerts by Detection Rule | Bar chart | 31 alerts; Account lockout the noisiest (9), because every brute-force test locked the account |
+| Top 10 Accounts with Failed Sign-ins | Bar chart | Accounts failing to sign in |
+| Open Incidents | Grid | Incidents not yet closed, newest first |
+
+Sentinel writes a new `SecurityIncident` row every time an incident changes, so the incident panels use `arg_max(TimeGenerated, *) by IncidentNumber` to keep only the latest version of each incident. Without it, incidents would be counted several times and closed ones would still appear as open.
+
+![Workbook: incidents by severity](images/28-workbook-severity.png)
+
+![Workbook: alerts by detection rule](images/29-workbook-alerts-by-rule.png)
+
+![Workbook: failed sign-ins and open incidents](images/30-workbook-open-incidents.png)
+
+**Open finding.** The failed sign-ins panel showed five failures for a Microsoft account (`MicrosoftAccount\<name>`, redacted) that is not part of the lab domain. It may be the Remote Desktop client offering the analyst laptop's Windows sign-in before the lab credentials are typed, or sign-in attempts from the internet. The source IP decides which, and is the first triage step in the next session:
+
+```kql
+SecurityEvent
+| where EventID == 4625 and TargetAccount has "<account name>"
+| project TimeGenerated, Computer, TargetAccount, LogonType, IpAddress, WorkstationName, Status, SubStatus
+| order by TimeGenerated desc
+```
+
 ## Next steps
 
-1. Fix the entity mapping gaps (Challenge 9) and turn on alert grouping on every rule (Challenge 6).
-2. Build a workbook as the at-a-glance analyst view.
-3. Create a SOAR playbook (Logic App) that notifies the analyst when an incident is created.
+1. Open incidents 14 and 15 and confirm the user and host entities and the alert count.
+2. Triage the failed sign-ins from the unrecognised Microsoft account.
+3. Close the remaining test incidents with a classification.
+4. Create a SOAR playbook (Logic App) that notifies the analyst when a High-severity incident is created.
 
 ## Repository contents
 
@@ -219,6 +295,7 @@ Event
 sentinel/
 ├── README.md
 ├── detections/   # KQL analytics rule queries, one per technique
+├── workbook/     # KQL queries for the SOC Lab Overview workbook panels
 ├── config/       # Data collection rule settings and XPath filters
 └── images/       # Redacted screenshots used in this README
 ```
@@ -315,9 +392,12 @@ sentinel/
 
 **Cause.** Each rule looks back further than it runs (every 10 minutes over the last 30, for example), so consecutive runs matched the same event and each opened a new incident. In a real SOC this is alert fatigue.
 
-**Steps to resolve.** On each rule: Edit, Incident settings, Alert grouping, group related alerts into one incident, limit 5 hours, group when all entities match.
+**Steps to resolve.**
+1. On each of the six rules: Edit, Incident settings, Alert grouping enabled, alerts within 5 hours grouped into one incident when all entities match, Review + create, Save.
+2. Checked each rule's *Last modified* date on the Analytics page to confirm the change had saved.
+3. Re-tested by running the same encoded PowerShell command twice.
 
-**Outcome.** Cause identified; the grouping change is the next step.
+**Outcome.** Resolved. Two runs produced one new incident (14) instead of two. Lesson: set alert grouping when a rule is created, not after the incident queue fills up.
 
 ### Challenge 7: `Unlock-ADAccount` not recognised
 
@@ -345,10 +425,11 @@ sentinel/
 
 **Steps to resolve.**
 1. Compared impacted assets across incidents: every other rule shows a host and an account.
-2. Service installation: Edit, Set rule logic, Entity mapping, Host, HostName mapped to `Computer`.
-3. Encoded PowerShell: extract the user in the query (for example `extract(@"User: (\S+)", 1, RenderedDescription)`) and map it to an Account entity.
+2. Service installation: rewrote the query to extract the service name, file and account, and mapped Host with identifier `FullName` to `Computer` (FullName rather than HostName, because `Computer` holds the fully qualified name).
+3. Encoded PowerShell: rewrote the query to extract the user (split into `AccountName` and `AccountDomain`) and the encoded payload, changed the Host identifier to `FullName`, and added an Account entity.
+4. Re-ran both attacks; the updated rules raised incidents 14 and 15.
 
-**Outcome.** Cause identified and fixes defined; to be applied next. Lesson: test that every rule returns the entities an analyst needs, not just that it fires.
+**Outcome.** Fixes applied and re-tested. Confirming the entities on the incident pages of 14 and 15 is the first step of the next session. Lesson: test that every rule returns the entities an analyst needs, not just that it fires.
 
 ### Challenge 10: Decoding the payload failed twice
 
@@ -363,6 +444,16 @@ sentinel/
 
 **Outcome.** Resolved. Lesson: take evidence directly from the source, and know enough about the encoding to spot a truncated value.
 
+### Challenge 11: Portal labels changed again during the build
+
+**What happened.** Instructions did not match the screen: incidents were now listed under **Cases** (with a Case ID beside the Incident ID), and the workbook editor had no *Add query* option.
+
+**Cause.** Microsoft is still reorganising the unified Defender portal (see Challenge 2). Incidents are now managed as cases, and *Add query* was renamed *Add data source + visualization*.
+
+**Steps to resolve.** Matched each new label to the documented function, and confirmed the function was unchanged by checking the panel settings (data source, workspace, time range, visualisation, query).
+
+**Outcome.** Resolved. Lesson: in cloud consoles, follow the function rather than the exact label, and record the label in use on the date of the build.
+
 ## Skills demonstrated
 
 - Deploying Microsoft Sentinel on a Log Analytics workspace and working within regional and tenant constraints
@@ -372,3 +463,5 @@ sentinel/
 - Systematic troubleshooting of an ingestion pipeline from the portal down to the agent's local configuration
 - Detection tuning: aligning thresholds with lockout policy and diagnosing duplicate incidents
 - Incident triage: scoping an incident, extracting and decoding an obfuscated PowerShell payload from the evidence, and closing it with a documented classification
+- Improving detections from investigation findings: extracting context into the alert, mapping host and account entities, and grouping alerts to reduce duplicate incidents
+- Building a Sentinel workbook for an at-a-glance SOC view, and spotting an unexpected account from it

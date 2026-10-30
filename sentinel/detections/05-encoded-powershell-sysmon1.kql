@@ -1,6 +1,12 @@
 // T1059.001 PowerShell (Execution) | Severity: High | Run every 10 min, look back 30 min
 // Requires the dcr-system-sysmon data collection rule (Sysmon event 1 into the Event table).
+// Entity mapping: Host (FullName = Computer); Account (Name = AccountName, NTDomain = AccountDomain).
+// Alert grouping: enabled, 5 hours, group when all entities match.
 Event
 | where EventLog == "Microsoft-Windows-Sysmon/Operational" and EventID == 1
 | where RenderedDescription has "EncodedCommand"
-| project TimeGenerated, Computer, RenderedDescription
+| extend User = extract(@"User: (\S+)", 1, RenderedDescription)
+| extend AccountDomain = tostring(split(User, "\\")[0]),
+         AccountName   = tostring(split(User, "\\")[1])
+| extend EncodedPayload = extract(@"-EncodedCommand\s+(\S+)", 1, RenderedDescription)
+| project TimeGenerated, Computer, User, AccountName, AccountDomain, EncodedPayload
