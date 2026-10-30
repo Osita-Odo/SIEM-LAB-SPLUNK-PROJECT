@@ -4,7 +4,7 @@ A cloud-native SIEM lab built on Microsoft Sentinel. Windows logs from an Active
 
 This is the Sentinel half of the [SIEM labs](../README.md). It detects the same attacks as the [Splunk SIEM lab](../splunk/README.md), so the two can be compared side by side, and it uses the domain from the [Azure Active Directory Lab](https://github.com/Osita-Odo/azure-active-directory-lab) as its log source.
 
-> **Status: in progress.** Phases 1 to 4 are complete: all six detections are proven by real incidents. In Phase 5, a High incident has been investigated, decoded from the evidence and closed; the rules were then tuned from what the investigation showed (user, payload and service details extracted, entities mapped, alert grouping on), re-tested, and a SOC overview workbook was built. An automated response playbook comes next.
+> **Status: complete.** All six detections are proven by real incidents. A High incident was investigated and decoded from the evidence; the rules were tuned from what the investigation showed (user, payload and service details extracted, entities mapped, alert grouping on) and re-tested; a SOC overview workbook was built and used to triage an unknown account; every test incident was closed with a classification; and a playbook with an automation rule now comments on and tags every new High incident, proven on a live incident.
 
 ## Objective
 
@@ -174,7 +174,7 @@ Remove-ADGroupMember -Identity "Domain Admins" -Members "svc_sentinel" -Confirm:
 Disable-ADAccount -Identity "svc_sentinel"
 ```
 
-### Phase 5: Investigate, tune and monitor (in progress)
+### Phase 5: Investigate, tune, monitor and automate
 
 #### 5.1 Investigate and close an incident
 
@@ -254,6 +254,17 @@ The updated rules raised **incident 14** (Encoded PowerShell, High) and **incide
 
 ![Cases after the re-test: one new incident for two runs](images/27-cases-after-retest.png)
 
+Opening the incidents confirmed the entity fix:
+
+- **Incident 14:** two assets, the device VM-AD and the user `osita`. Incident 11 showed the device only.
+- **Incident 15:** the device VM-AD. Service installation incidents previously had no assets. No user is expected, because event 7045 records the service account (LocalSystem), not a person.
+
+![Incident 14: device and user](images/31-incident-14-user-and-device.png)
+
+![Incident 15: device mapped](images/32-incident-15-device.png)
+
+**Known limitation.** Incident 14 holds 6 alerts and incident 15 holds 3. Each rule runs every 10 minutes over a 30-minute lookback, so every event is matched by three consecutive runs. Alert grouping keeps them in one incident, so the queue is clean, but the alert count is inflated. Query suppression (pause 30 minutes after an alert) would remove the duplicates; a lookback equal to the run frequency would too, at the risk of missing late-arriving logs.
+
 #### 5.4 SOC Lab Overview workbook
 
 A workbook gives the analyst the state of the environment at a glance, as the Splunk dashboard did in the other lab. It has four panels, all on the last seven days ([queries](workbook/soc-lab-overview-queries.kql)):
@@ -273,7 +284,9 @@ Sentinel writes a new `SecurityIncident` row every time an incident changes, so 
 
 ![Workbook: failed sign-ins and open incidents](images/30-workbook-open-incidents.png)
 
-**Open finding.** The failed sign-ins panel showed five failures for a Microsoft account (`MicrosoftAccount\<name>`, redacted) that is not part of the lab domain. It may be the Remote Desktop client offering the analyst laptop's Windows sign-in before the lab credentials are typed, or sign-in attempts from the internet. The source IP decides which, and is the first triage step in the next session:
+#### 5.5 Triage an unknown account found in the workbook
+
+The failed sign-ins panel showed five failures for a Microsoft account (`MicrosoftAccount\<name>`, redacted) that is not a lab account. Every unknown account failing to sign in has to be explained before it is dismissed:
 
 ```kql
 SecurityEvent
@@ -282,12 +295,53 @@ SecurityEvent
 | order by TimeGenerated desc
 ```
 
-## Next steps
+- All five targeted CLIENT01 with logon type 3, the credential check Remote Desktop makes before a session opens.
+- Two came from the analyst's home network (30 October) and three from another network the analyst used (28 October). The workstation was the analyst's own laptop. Addresses and names are redacted.
+- **Verdict: benign.** The Remote Desktop client offered the laptop's Microsoft account before the lab credentials were typed. No attempt came from an unknown source, which also shows the NSG restriction on Remote Desktop working. Action: clear the saved credential in the Remote Desktop client.
 
-1. Open incidents 14 and 15 and confirm the user and host entities and the alert count.
-2. Triage the failed sign-ins from the unrecognised Microsoft account.
-3. Close the remaining test incidents with a classification.
-4. Create a SOAR playbook (Logic App) that notifies the analyst when a High-severity incident is created.
+![The five failed sign-ins, redacted](images/33-unknown-account-triage.png)
+
+#### 5.6 Close the test incidents
+
+All ten open cases were closed in one bulk action: assigned to the analyst, status Resolved, **Benign Positive, Security Testing**, with a comment recording the authorised attack simulation. Severity was left unchanged, because it records what the rule detected; the classification records what the activity turned out to be.
+
+![All test cases closed](images/34-all-test-cases-closed.png)
+
+#### 5.7 Automated response: playbook and automation rule
+
+Every High incident needs the same first steps, so they are automated. The playbook `pb-notify-high-incident` (Logic App, Consumption) runs three steps:
+
+1. **Microsoft Sentinel incident** trigger.
+2. **Add comment to incident (V3):** a triage checklist with the incident's severity and creation time, inserted as dynamic values.
+3. **Update incident:** adds the tag `auto-triaged`.
+
+An automation rule, **Run triage playbook on High incidents** (When incident is created, Severity equals High, Run Logic App playbook), starts it. The playbook's managed identity has **Microsoft Sentinel Responder** on the resource group: enough to comment on and update incidents, not enough to change rules or settings.
+
+The first design sent an email; it was replaced because the university mailbox cannot be used by the Outlook connector (Challenge 12). Getting the playbook to run needed three more fixes (Challenges 13 to 15).
+
+**Test.** An encoded PowerShell command on VM-AD raised **incident 16** (High) at 23:51 on 30 October, and the automation rule started the playbook two seconds later. After the role fix, the run was resubmitted and all three steps succeeded:
+
+- tag `auto-triaged` added;
+- comment posted by *Playbook-pb-notify-high-incident*: "Severity: High | Created (UTC): 2026-10-30T22:51:09" and the checklist;
+- the incident graph links VM-AD to the user `osita`, confirming the entity fix on a new attack.
+
+Incident 16 was then closed as Benign Positive, Security Testing.
+
+![The playbook](images/35-playbook-designer.png)
+
+![The automation rule](images/36-automation-rule.png)
+
+![The successful run after the failed attempts](images/37-playbook-run-succeeded.png)
+
+![Incident 16 with the tag and the device and user entities](images/38-incident-16-tag-and-entities.png)
+
+![The comment written by the playbook](images/39-incident-16-playbook-comment.png)
+
+## Possible extensions
+
+1. Add a notification step to the playbook (Microsoft Teams, or email from a mailbox hosted in Exchange Online).
+2. Apply query suppression to the Sysmon and System rules to remove the duplicate alerts inside an incident.
+3. Onboard the VMs to Microsoft Defender for Endpoint to add EDR alerts alongside the log-based rules.
 
 ## Repository contents
 
@@ -397,7 +451,7 @@ sentinel/
 2. Checked each rule's *Last modified* date on the Analytics page to confirm the change had saved.
 3. Re-tested by running the same encoded PowerShell command twice.
 
-**Outcome.** Resolved. Two runs produced one new incident (14) instead of two. Lesson: set alert grouping when a rule is created, not after the incident queue fills up.
+**Outcome.** Resolved. Two runs produced one new incident (14) instead of two; the duplicate alerts inside an incident are explained in Phase 5.3. Lesson: set alert grouping when a rule is created, not after the incident queue fills up.
 
 ### Challenge 7: `Unlock-ADAccount` not recognised
 
@@ -429,7 +483,7 @@ sentinel/
 3. Encoded PowerShell: rewrote the query to extract the user (split into `AccountName` and `AccountDomain`) and the encoded payload, changed the Host identifier to `FullName`, and added an Account entity.
 4. Re-ran both attacks; the updated rules raised incidents 14 and 15.
 
-**Outcome.** Fixes applied and re-tested. Confirming the entities on the incident pages of 14 and 15 is the first step of the next session. Lesson: test that every rule returns the entities an analyst needs, not just that it fires.
+**Outcome.** Resolved. Incident 14 shows the device and the user `osita`, incident 15 shows the device, and incident 16 confirmed it again on a new attack. Lesson: test that every rule returns the entities an analyst needs, not just that it fires.
 
 ### Challenge 10: Decoding the payload failed twice
 
@@ -454,6 +508,67 @@ sentinel/
 
 **Outcome.** Resolved. Lesson: in cloud consoles, follow the function rather than the exact label, and record the label in use on the date of the build.
 
+### Challenge 12: The playbook could not send email from the university mailbox
+
+**What happened.** Signing in to the Office 365 Outlook connector returned 404, "REST API is not yet supported for this mailbox" (`MailboxNotEnabledForRESTAPI`).
+
+**Cause.** The connector needs a mailbox in Exchange Online. The university mailbox is hosted on the university's own mail server, and the lab subscription sits in the university tenant, so this is outside the analyst's control.
+
+**Steps to resolve.**
+1. Read the error code, which names the mailbox type rather than a permission problem.
+2. Removed the email steps.
+3. Redesigned the response to write back to the incident (comment and tag) through the existing Sentinel connection, which needs no mailbox.
+
+**Outcome.** Resolved by design change. Writing to the incident is a standard SOAR response and cannot be blocked by mail policy; notification is listed as an extension.
+
+![The mailbox error](images/40-mailbox-not-supported.png)
+
+### Challenge 13: A look-alike third-party connector
+
+**What happened.** Searching for *Update incident* offered an action with the same name that asked for an API key. Its panel said it was an **Independent Publisher** connector, provided "as is" and not supported by Microsoft.
+
+**Cause.** Connector actions are searched by name across all publishers, so different products can offer identically named actions.
+
+**Steps to resolve.**
+1. Closed the panel without entering anything and deleted the empty step.
+2. Searched for *Microsoft Sentinel* and chose *Update incident* from the Microsoft Sentinel connector (blue shield), reusing the existing connection.
+
+**Outcome.** Resolved. Lesson: check the publisher before adding a connector to security tooling; an unknown third-party connector holding an API key is a supply-chain risk.
+
+![The third-party connector](images/41-third-party-connector.png)
+
+### Challenge 14: Sentinel could not be given permission to run the playbook
+
+**What happened.** The playbook was greyed out in the automation rule. *Manage playbook permissions* failed with "Service principal not found for application ID 58131f34-…", and the selected playbook showed *Missing permissions*.
+
+**Cause.** The Defender portal grants the permission to its own service identity, which does not exist in the university tenant; only a tenant administrator could add it.
+
+**Steps to resolve.**
+1. Granted it manually: resource group, Access control (IAM), **Microsoft Sentinel Automation Contributor** for **Azure Security Insights**. Azure reported the assignment already existed, created by the first, partly successful attempt.
+2. Saved the automation rule (Standard rule) despite the warning.
+3. Tested with a real High incident: the rule started the playbook two seconds after incident 16 was created.
+
+**Outcome.** Resolved. The warning reflects the portal's check for the missing identity, not the permission the rule uses. Lesson: when a portal check and the real behaviour disagree, test the behaviour.
+
+![The permission error](images/42-playbook-permission-error.png)
+
+### Challenge 15: Playbook runs failed: Forbidden, then empty manual runs
+
+**What happened.** The automated run for incident 16 failed at *Add comment to incident* with **Forbidden**. Two later runs failed with **BadRequest**, inner error "Incident Arm id missing".
+
+**Cause.** Two separate causes. The Sentinel connection authenticates as the playbook's managed identity, which had no role on the workspace, so it could read the incident but not change it. The BadRequest runs had been started with *Run* in the designer: their raw inputs showed an empty request body sent from the browser, so every dynamic value was null.
+
+**Steps to resolve.**
+1. Read the failed step's status: Forbidden.
+2. Assigned **Microsoft Sentinel Responder** to the Logic App's managed identity on the resource group (least privilege for comments and updates).
+3. Inspected the BadRequest runs: `incidentArmId` null, and a manual trigger with an empty body.
+4. Resubmitted the original automated run for incident 16, which replays the real incident data.
+5. All three steps succeeded; the tag and comment appeared on incident 16.
+
+**Outcome.** Resolved. Lessons: give a playbook identity the least role it needs, and test a playbook by resubmitting a real run, not by running the trigger by hand.
+
+![The Forbidden run](images/43-playbook-forbidden.png)
+
 ## Skills demonstrated
 
 - Deploying Microsoft Sentinel on a Log Analytics workspace and working within regional and tenant constraints
@@ -464,4 +579,5 @@ sentinel/
 - Detection tuning: aligning thresholds with lockout policy and diagnosing duplicate incidents
 - Incident triage: scoping an incident, extracting and decoding an obfuscated PowerShell payload from the evidence, and closing it with a documented classification
 - Improving detections from investigation findings: extracting context into the alert, mapping host and account entities, and grouping alerts to reduce duplicate incidents
-- Building a Sentinel workbook for an at-a-glance SOC view, and spotting an unexpected account from it
+- Building a Sentinel workbook for an at-a-glance SOC view, and triaging an unexpected account found in it with advanced hunting
+- Automating first response with a Logic App playbook and automation rule, including least-privilege managed identity and troubleshooting failed runs

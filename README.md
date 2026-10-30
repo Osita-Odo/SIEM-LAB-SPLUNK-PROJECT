@@ -5,7 +5,7 @@ Two hands-on SIEM labs built on Microsoft Azure that detect the same attacks aga
 | Project | What it covers | Status |
 |---|---|---|
 | **[Splunk SIEM Lab](splunk/README.md)** | Splunk Enterprise on an Ubuntu VM, Universal Forwarder and Sysmon on the endpoints, six SPL detections, a scheduled alert and a monitoring dashboard | Complete |
-| **[Microsoft Sentinel SOC Lab](sentinel/README.md)** | Sentinel on a Log Analytics workspace, Azure Monitor Agent with data collection rules, six KQL analytics rules and incidents in the Microsoft Defender portal | In progress (all six detections proven; incident investigated, rules tuned, workbook built; playbook next) |
+| **[Microsoft Sentinel SOC Lab](sentinel/README.md)** | Sentinel on a Log Analytics workspace, Azure Monitor Agent with data collection rules, six KQL analytics rules tuned from investigation, a SOC overview workbook, and a playbook that automates first response to High incidents | Complete |
 
 Both labs use the Windows domain built in the [Azure Active Directory Lab](https://github.com/Osita-Odo/azure-active-directory-lab) as their log source: a domain controller (VM-AD) and a domain-joined client (CLIENT01), both running Sysmon.
 
@@ -47,7 +47,7 @@ flowchart LR
 | Hosting | Self-managed Ubuntu VM, Splunk run as a non-root systemd service | Managed service on a Log Analytics workspace |
 | Collection | Universal Forwarder, `inputs.conf` / `outputs.conf` | Azure Monitor Agent, data collection rules with XPath filters |
 | Query language | SPL | KQL |
-| Detection output | Scheduled alert and Triggered Alerts | Analytics rules raising incidents with mapped entities |
+| Detection output | Scheduled alert and Triggered Alerts | Analytics rules raising incidents with mapped entities, plus a playbook that comments on and tags High incidents |
 | Analyst view | Classic dashboard | Incidents (cases) in the Microsoft Defender portal and a SOC overview workbook |
 | Cost model | VM compute | Ingestion volume (kept low with filtered collection) |
 | Hardest problem | DNS resolution through the domain controller, and Splunk refusing to run as root | Collection agent never installed, then invisible leading spaces in a pasted XPath filter |
